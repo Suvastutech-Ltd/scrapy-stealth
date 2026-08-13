@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ..core.logger import get_logger
-from ..detection.js_challenge import _JS_IS_CHALLENGE
+from .js_challenge import _JS_IS_CHALLENGE
+from .logger import get_logger
 
 logger = get_logger()
 
