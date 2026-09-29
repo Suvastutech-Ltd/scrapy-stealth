@@ -77,6 +77,27 @@ class StealthStats:
         self.inc("stealth/proxy/requests")
         self.inc(f"stealth/proxy/requests/{driver}")
 
+    def record_proxy_connection_failure(self, driver: str, proxy: str | None) -> None:
+        """Record transport-level proxy failure (CONNECT/407, tunnel aborted, etc.)."""
+        self.inc("stealth/proxy/connection_failures")
+        self.inc(f"stealth/proxy/connection_failures/{driver}")
+        host = proxy_host_for_stats(proxy)
+        if host is not None:
+            self.set("stealth/proxy/last_connection_failure", host)
+
+    def record_proxy_cooldown(self, driver: str, proxy: str | None) -> None:
+        """Record when a proxy enters per-domain cooldown."""
+        self.inc("stealth/proxy/cooldowns")
+        self.inc(f"stealth/proxy/cooldowns/{driver}")
+        host = proxy_host_for_stats(proxy)
+        if host is not None:
+            self.set("stealth/proxy/last_cooldown", host)
+
+    def record_proxy_rotation(self, driver: str) -> None:
+        """Record when the engine rotates to another proxy after failure."""
+        self.inc("stealth/proxy/rotations")
+        self.inc(f"stealth/proxy/rotations/{driver}")
+
     def record_ban(self, driver: str, streak: int, banned: bool) -> None:
         if banned:
             self.inc("stealth/bans")
@@ -87,7 +108,31 @@ class StealthStats:
         self.inc("stealth/recycles")
         self.inc(f"stealth/recycles/{driver}")
 
-    def record_fallback(self, from_driver: str, to_driver: str) -> None:
+    def record_fallback(
+        self, from_driver: str, to_driver: str, method: str | None = None
+    ) -> None:
         self.inc("stealth/fallbacks")
         self.inc(f"stealth/fallbacks/{from_driver}")
+        if method:
+            self.inc(f"stealth/fallbacks/method/{method.lower()}")
         self.set("stealth/fallback_driver", to_driver)
+
+    def record_browser_cookies(self, count: int) -> None:
+        if count <= 0:
+            return
+        self.inc("stealth/browser_cookies_exported", count)
+
+    def record_throttle_wait(self, driver: str, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        self.inc("stealth/throttle/waits")
+        self.inc(f"stealth/throttle/waits/{driver}")
+        self.inc("stealth/throttle/wait_ms", max(1, int(seconds * 1000)))
+
+    def record_throttle_rate_limit(self, driver: str) -> None:
+        self.inc("stealth/throttle/rate_limited")
+        self.inc(f"stealth/throttle/rate_limited/{driver}")
+
+    def record_throttle_retry_after(self, driver: str) -> None:
+        self.inc("stealth/throttle/retry_after")
+        self.inc(f"stealth/throttle/retry_after/{driver}")

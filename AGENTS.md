@@ -18,7 +18,8 @@ pip install -e ".[dev]"
 python scripts/check.py
 ```
 
-See [CHECK.md](CHECK.md) for individual commands.
+See [CHECK.md](CHECK.md) for individual commands. User docs: [scrapy-stealth.readthedocs.io](https://scrapy-stealth.readthedocs.io/)
+(source in `docs/`, built via MkDocs).
 
 ## Conventions
 
@@ -28,17 +29,20 @@ See [CHECK.md](CHECK.md) for individual commands.
 
 ---
 
-## Sponsor
+## Sponsors
 
-**[NodeMaven](https://go.nodemaven.com/Fawadss1agentmdgh)** — the most efficient proxy provider for web scrapping and automation with the highest-quality IP on the market.
+### NodeMaven
 
-**Why [NodeMaven](https://go.nodemaven.com/Fawadss1agentmdgh)?**
+**[NodeMaven](https://go.nodemaven.com/Fawadss1agentmdsept)** — the most efficient proxy provider for web scrapping and automation with
+the highest-quality IP on the market.
+
+**Why [NodeMaven](https://go.nodemaven.com/Fawadss1agentmdsept)?**
 
 - 99.9% uptime
 - ZIP Targeting
 - IP filtering: all proxies have fraud score <97%
 - No KYC required
-- Unique free tools: [Proxy Bandwidth Checker](https://go.nodemaven.com/Fawadss1tools), Meta Tag Checker, IP Lookup, and others
+- Unique free tools: [Proxy Bandwidth Checker](https://go.nodemaven.com/Fawadss1toolssept), Meta Tag Checker, IP Lookup, and others
 
 Special codes for scrapy-stealth users:
 

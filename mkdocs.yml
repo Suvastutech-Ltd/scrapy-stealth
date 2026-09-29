@@ -1,0 +1,91 @@
+site_name: scrapy-stealth
+site_description: Pluggable anti-bot and stealth framework for Scrapy
+site_url: https://scrapy-stealth.readthedocs.io/
+repo_url: https://github.com/fawadss1/scrapy-stealth
+repo_name: fawadss1/scrapy-stealth
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  language: en
+  logo: static/logo-mark.svg
+  favicon: static/logo-mark.svg
+  font:
+    text: DM Sans
+    code: JetBrains Mono
+  palette:
+    - scheme: slate
+      primary: black
+      accent: cyan
+  features:
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/stealth.css
+
+extra_javascript:
+  - javascripts/stealth.js
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quick start: getting-started/quickstart.md
+      - Example spider: getting-started/example-spider.md
+  - Configuration:
+      - Global settings: configuration/settings.md
+      - Per-request meta: configuration/meta.md
+  - Drivers:
+      - Overview: drivers/overview.md
+      - Smart selection (auto): drivers/auto.md
+      - Browser engine: drivers/browser.md
+  - Guides:
+      - Cookies & HTTP requests: guides/cookies-and-requests.md
+      - DNS overrides: guides/dns-overrides.md
+      - Proxy management: guides/proxy-management.md
+      - Throttle & behavior: guides/throttle-and-behavior.md
+      - Snapshots: guides/snapshots.md
+      - Strategies: guides/strategies.md
+  - Reference:
+      - Features: reference/features.md
+      - Comparison: reference/comparison.md
+      - Anti-bot detection: reference/antibot-detection.md
+      - Scrapy stats: reference/stats.md
+      - Troubleshooting: reference/troubleshooting.md
+      - Changelog: reference/changelog.md
+  - Development:
+      - Contributing: development/contributing.md
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/fawadss1/scrapy-stealth
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/scrapy-stealth/

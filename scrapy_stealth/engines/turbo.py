@@ -31,8 +31,6 @@ from .base import BaseEngine
 
 logger = get_logger()
 
-# Session cache key: (impersonate profile, frozen sorted DNS resolve entries).
-# DNS is applied at Session construction via CurlOpt.RESOLVE (not per-request).
 _TurboSessionKey = tuple[Any, tuple[str, ...]]
 
 
@@ -53,23 +51,31 @@ class TurboEngine(BaseEngine):
     @staticmethod
     def _make_session(key: _TurboSessionKey) -> Session:
         impersonate, resolve_entries = key
-        kwargs: dict[str, Any] = {"impersonate": impersonate}
+        kwargs: dict[str, Any] = {"impersonate": impersonate, "default_headers": True}
         if resolve_entries:
             kwargs["curl_options"] = {CurlOpt.RESOLVE: list(resolve_entries)}
         return Session(**kwargs)
 
     def _maybe_recycle_sessions(
-        self, response: Response | None, current_proxy: str | None = None
+        self,
+        request: Request,
+        response: Response | None,
+        current_proxy: str | None = None,
     ) -> None:
         """Drop cached sessions; rotate profile + proxy after N consecutive bans."""
         banned = response is not None and AntiBotDetector.is_browser_session_ban(
             response
         )
+        self._record_proxy_health(request, response, current_proxy, banned=banned)
         should_recycle = self._bans.record(banned)
         self._record_response(response, banned)
         if not should_recycle:
             return
-        profile, proxy = self._recycle_identity(current_proxy=current_proxy)
+        domain = self._request_domain(request)
+        profile, proxy = self._recycle_identity(
+            current_proxy=current_proxy,
+            domain=domain,
+        )
         console.info(
             f"Recycling turbo sessions after "
             f"{config.get('STEALTH_RECYCLE_AFTER_BANS')} consecutive bans "
@@ -83,37 +89,37 @@ class TurboEngine(BaseEngine):
         ctx = self._ctx(request)
         self._record_request_identity(ctx.profile, ctx.proxy)
         try:
-            browser = resolve_browser(ctx.profile, backend="turbo")
+            browser = resolve_browser(ctx.profile, backend="turbo", http3=ctx.http3)
             prepared = build_stealth_request(request)
-
-            kwargs: dict[str, Any] = {
-                **prepared.http_kwargs(),
-                "timeout": ctx.timeout,
-                "http_version": CurlHttpVersion.V2_0
-                if ctx.http2
-                else CurlHttpVersion.V1_1,
-            }
-            if ctx.proxy:
-                kwargs["proxies"] = {"http": ctx.proxy, "https": ctx.proxy}
+            if ctx.http3:
+                http_version = CurlHttpVersion.V3
+            elif ctx.http2:
+                http_version = CurlHttpVersion.V2_0
+            else:
+                http_version = CurlHttpVersion.V1_1
 
             dns_overrides = resolve_dns_overrides(request)
             self._record_dns(len(dns_overrides))
             resolve_entries = tuple(build_curl_resolve(dns_overrides, request.url))
             if resolve_entries:
-                logger.debug(
-                    "Turbo engine DNS override(s): %s",
-                    dns_overrides,
-                )
+                logger.debug("Turbo engine DNS override(s): %s", dns_overrides)
 
             logger.debug(
-                "Initializing turbo stealth client (profile=%s & protocol=%s)",
+                "Initializing turbo stealth client (profile=%s impersonate=%s http=%s)",
                 ctx.profile,
-                "HTTP/2" if ctx.http2 else "HTTP/1.1",
+                browser,
+                http_version.name,
             )
 
             session = self._sessions.get((browser, resolve_entries))
-            method_fn = getattr(session, prepared.method_name)
-            resp = method_fn(prepared.url, **kwargs)
+            resp = getattr(session, prepared.method_name)(
+                prepared.url,
+                **prepared.turbo_kwargs(
+                    timeout=ctx.timeout,
+                    http_version=http_version,
+                    proxy=ctx.proxy,
+                ),
+            )
 
             resp_headers = {
                 k: v for k, v in resp.headers.items() if k.lower() != "content-encoding"
@@ -134,7 +140,7 @@ class TurboEngine(BaseEngine):
                 encoding=resp.encoding,
                 _flags=["turbo"],
             )
-            self._maybe_recycle_sessions(response, current_proxy=ctx.proxy)
+            self._maybe_recycle_sessions(request, response, current_proxy=ctx.proxy)
             return response
 
         except StealthRequestError as exc:
@@ -154,6 +160,7 @@ class TurboEngine(BaseEngine):
                     f"Turbo engine timed out after {ctx.timeout}s fetching {request.url!r}",
                 )
             if isinstance(exc, (CurlConn, CurlDNS, CurlProxy)):
+                self._on_proxy_transport_failure(request, ctx.proxy)
                 raise_stealth(
                     StealthConnectionError,
                     f"Turbo engine connection failed fetching {request.url!r}: {exc}",

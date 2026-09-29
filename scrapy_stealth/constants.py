@@ -19,8 +19,6 @@ BLOCK_KEYWORDS: list[str] = [
     "unusual traffic",
 ]
 
-# Default browser profile used when no profile is specified.
-DEFAULT_PROFILE: str = "chrome_147"
 
 # Default engine used when no engine is specified in request meta.
 DEFAULT_ENGINE: str = "scrapy"
@@ -34,6 +32,11 @@ LOGGER_NAME = _pkg_meta.name
 # Whether the stealth engine uses HTTP/2.
 # Disable if targeting servers that only support HTTP/1.1.
 HTTP2: bool = True
+
+# Turbo driver: use HTTP/3 (QUIC) when True.
+# UDP-capable proxy for QUIC (most HTTP proxies only support HTTP/1.1–2).
+# Overridable per-request via meta["stealth"]["http3"].
+HTTP3: bool = False
 
 # Default stealth driver. Options: "basic", "turbo", "browser", or "auto".
 # "auto" uses this as the primary HTTP driver (default "turbo"), then retries once
@@ -62,11 +65,15 @@ STEALTH_PROXIES: list[str] = []
 # Example: {"example.com": "203.0.113.10", "www.example.com": "203.0.113.10"}
 STEALTH_DNS_OVERRIDES: dict[str, str] = {}
 
-# Browser engine: run Chrome headless by default.
-BROWSER_HEADLESS: bool = True
+# Browser engine: visible window by default (more stealthy than headless).
+BROWSER_HEADLESS: bool = False
 
 # Browser engine: seconds to wait after navigation for JS to finish rendering.
 BROWSER_SETTLE_S: float = 4.0
+
+# Browser engine: max seconds to wait on JS challenge / Cloudflare interstitials
+# (403/503 "Just a moment" pages) before capturing the response.
+BROWSER_CHALLENGE_TIMEOUT_S: float = 30.0
 
 # Browser engine: max Chrome tabs open simultaneously across concurrent requests.
 BROWSER_MAX_TABS: int = 10
@@ -100,6 +107,16 @@ BROWSER_PROXY_BYPASS_LIST: list[str] = []
 # Set True to force no-sandbox mode; False to keep sandbox even when running as root.
 BROWSER_NO_SANDBOX: bool | None = None
 
+# Browser engine: attach to an external CDP endpoint instead of launching Chrome.
+# Examples: http://127.0.0.1:9222 (local debug port), or https://… (remote CDP API base).
+# Per-request override: meta["stealth"]["cdp_url"].
+STEALTH_CDP_URL: str | None = None
+
+# Extra options when connecting to STEALTH_CDP_URL (e.g. Authorization headers).
+# Passed to the HTTP /json/version request and the CDP WebSocket handshake.
+# Per-request override / merge: meta["stealth"]["cdp_connect_kwargs"].
+STEALTH_CDP_CONNECT_KWARGS: dict[str, object] = {}
+
 # Browser engine: path to the browser executable.
 # None = auto-detect: nodriver will locate Google Chrome / Chromium automatically.
 # Set to an explicit path to use a different browser binary (e.g. Brave, Chromium, or a
@@ -107,3 +124,29 @@ BROWSER_NO_SANDBOX: bool | None = None
 #   config.BROWSER_EXECUTABLE_PATH = "/usr/bin/brave-browser"
 #   config.BROWSER_EXECUTABLE_PATH = "/opt/chrome/chrome"
 BROWSER_EXECUTABLE_PATH: str | None = None
+
+# Browser engine: after each browser response, merge tab cookies into Scrapy's cookie
+# jar when COOKIES_ENABLED is on. Per-request opt-out:
+# meta["stealth"]["export_cookies"] = False. Cookies are always exposed on the
+# response as meta["stealth"]["browser_cookies"] and ["browser_cookie_header"].
+BROWSER_EXPORT_COOKIES: bool = True
+
+# Proxy health scoring: track success/fail per proxy + target domain in memory.
+# Proxies that hit repeated block codes on a domain enter a temporary cooldown
+# and are skipped during rotation until the cooldown expires.
+STEALTH_PROXY_HEALTH: bool = True
+
+# Consecutive block responses (see STEALTH_PROXY_CIRCUIT_CODES) on the same
+# proxy + domain before the proxy is cooled down.
+STEALTH_PROXY_CIRCUIT_AFTER: int = 3
+
+# Seconds to keep a proxy off the pool for a domain after the circuit opens.
+STEALTH_PROXY_COOLDOWN_S: float = 300.0
+
+# HTTP status codes that count toward opening a per-domain proxy circuit.
+STEALTH_PROXY_CIRCUIT_CODES: frozenset[int] = frozenset({403})
+
+# When True (default), print styled [scrapy-stealth] console messages and emit
+# package logger output. Set False in settings.py or config to silence stealth logs.
+# The PyPI update notice is always shown when a newer version exists.
+STEALTH_LOGS: bool = True

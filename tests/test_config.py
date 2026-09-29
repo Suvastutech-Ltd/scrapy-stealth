@@ -9,13 +9,17 @@ def test_default_timeout():
     assert config.get("DEFAULT_TIMEOUT") == 30
 
 
-def test_default_profile():
-    assert config.get("DEFAULT_PROFILE") == "chrome_147"
-
-
 def test_http2_default():
     assert config.get("HTTP2") is True
 
 
+def test_http3_default():
+    assert config.get("HTTP3") is False
+
+
 def test_dns_overrides_default():
     assert config.get("STEALTH_DNS_OVERRIDES") == {}
+
+
+def test_stealth_logs_default():
+    assert config.get("STEALTH_LOGS") is True

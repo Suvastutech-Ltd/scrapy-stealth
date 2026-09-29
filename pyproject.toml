@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scrapy-stealth"
-version = "0.6.15"
+version = "1.0.1"
 description = "Stealthy Crawling. Maximum Results. A pluggable anti-bot and stealth framework for Scrapy."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -16,7 +16,7 @@ requires-python = ">=3.11"
 dependencies = [
     "scrapy>=2.12.0,<3.0",
     "wreq>=0.12.1",
-    "curl_cffi>=0.15.0",
+    "curl_cffi>=0.16.1",
     "nodriver>=0.50.3",
     "colorama>=0.4.6",
 ]
@@ -71,12 +71,17 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
 ]
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+]
 
 [project.urls]
-Documentation = "https://fawadss1.github.io/scrapy-stealth-site"
+Homepage = "https://scrapy-stealth.readthedocs.io/en/latest/"
+Documentation = "https://scrapy-stealth.readthedocs.io/en/latest/"
 Repository = "https://github.com/fawadss1/scrapy-stealth"
 Issues = "https://github.com/fawadss1/scrapy-stealth/issues"
-Changelog = "https://github.com/fawadss1/scrapy-stealth/releases"
+Changelog = "https://scrapy-stealth.readthedocs.io/en/latest/reference/changelog/"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -91,6 +96,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 88

@@ -41,8 +41,8 @@ class TestScrapyEngine:
 
 
 class TestResolveBrowser:
-    def test_default_profile_string_resolves(self):
-        assert resolve_browser(config.get("DEFAULT_PROFILE")) == Emulation.Chrome147
+    def test_chrome_147_resolves(self):
+        assert resolve_browser("chrome_147") == Emulation.Chrome147
 
     def test_enum_passthrough(self):
         assert resolve_browser(Emulation.Chrome147) == Emulation.Chrome147
@@ -62,8 +62,12 @@ class TestResolveBrowser:
     def test_string_opera_119(self):
         assert resolve_browser("opera_119") == Emulation.Opera119
 
-    def test_unknown_string_falls_back_to_default(self):
-        assert resolve_browser("unknown_browser_99") == Emulation.Chrome147
+    def test_unknown_string_falls_back_to_random_pool(self):
+        with patch(
+            "scrapy_stealth.utils.engine.profiles.ProfileRotator.get",
+            return_value="chrome_147",
+        ):
+            assert resolve_browser("unknown_browser_99") == Emulation.Chrome147
 
     def test_backward_compat_chrome_120(self):
         assert resolve_browser("chrome_120") == Emulation.Chrome120
@@ -288,10 +292,13 @@ class TestBasicEngine:
             ):
                 engine._execute(Request("https://example.com"))
 
-    def test_default_profile_matches_config(self):
+    def test_default_profile_picked_from_pool(self):
+        from scrapy_stealth.strategies.fingerprint import FINGERPRINTS
+
         with patch("scrapy_stealth.engines.basic.Client"):
             engine = BasicEngine()
-        assert engine.default_profile == resolve_browser(config.get("DEFAULT_PROFILE"))
+        assert engine._default_profile in FINGERPRINTS
+        assert engine.default_profile == resolve_browser(engine._default_profile)
 
     def test_client_reused_within_thread(self):
         mock_cls = MagicMock(return_value=_make_mock_client())
@@ -355,7 +362,7 @@ class TestBasicEngine:
         picks = iter(["http://p1:1", "http://p2:2", "http://p2:2"])
         monkeypatch.setattr(
             "scrapy_stealth.strategies.proxy.ProxyRotator.get",
-            lambda self: next(picks),
+            lambda self, **kwargs: next(picks),
         )
         mock_cls = MagicMock(return_value=_make_mock_client(status=403))
         with patch("scrapy_stealth.engines.basic.Client", mock_cls):
@@ -369,7 +376,7 @@ class TestBasicEngine:
         monkeypatch.setattr(config, "STEALTH_RECYCLE_AFTER_BANS", 2)
         monkeypatch.setattr(config, "STEALTH_RECYCLE_COOLDOWN_S", 0.0)
         monkeypatch.setattr(config, "STEALTH_PROXIES", [])
-        meta_proxy = "https://user:pass@dc.oxylabs.io:8000"
+        meta_proxy = "https://user:pass@proxy.example.com:8000"
         mock_cls = MagicMock(return_value=_make_mock_client(status=403))
         with patch("scrapy_stealth.engines.basic.Client", mock_cls):
             engine = BasicEngine(profile="chrome_147")
@@ -509,8 +516,27 @@ class TestTurboEngine:
         engine = TurboEngine()
         engine._execute(Request("https://example.com", headers={"Cookie": "sid=abc"}))
         call_kwargs = mock_session.get.call_args.kwargs
-        assert call_kwargs["headers"]["Cookie"] == "sid=abc"
-        assert "user-agent" not in {k.lower() for k in call_kwargs["headers"]}
+        assert call_kwargs["cookies"] == {"sid": "abc"}
+        assert "Cookie" not in call_kwargs.get("headers", {})
+        assert "user-agent" not in {k.lower() for k in call_kwargs.get("headers", {})}
+
+    def test_execute_uses_http3_version(self, session_patch):
+        mock_cls, mock_session = session_patch
+        engine = TurboEngine()
+        engine._execute(
+            Request("https://example.com", meta={"stealth": {"http3": True}})
+        )
+        call_kwargs = mock_session.get.call_args.kwargs
+        assert call_kwargs["http_version"] == CurlHttpVersion.V3
+
+    def test_execute_resolves_chrome150_profile(self, session_patch):
+        mock_cls, mock_session = session_patch
+        engine = TurboEngine()
+        engine._execute(
+            Request("https://example.com", meta={"stealth": {"profile": "chrome_147"}})
+        )
+        impersonate_arg = mock_cls.call_args.kwargs.get("impersonate")
+        assert impersonate_arg == "chrome150"
 
     def test_execute_no_data_on_get_without_body(self, session_patch):
         mock_cls, mock_session = session_patch
@@ -573,6 +599,51 @@ class TestTurboEngine:
                 StealthConnectionError, match=r"Turbo engine connection failed fetching"
             ):
                 engine._execute(Request("https://example.com"))
+
+    def test_rotates_proxy_on_connection_failure(self, monkeypatch):
+        from curl_cffi.requests.exceptions import ProxyError as CurlProxy
+
+        monkeypatch.setattr(
+            config,
+            "STEALTH_PROXIES",
+            ["http://p1:8080", "http://p2:8080"],
+        )
+        picks = iter(["http://p1:8080", "http://p2:8080"])
+        monkeypatch.setattr(
+            "scrapy_stealth.strategies.proxy.ProxyRotator.get",
+            lambda self, **kwargs: next(picks),
+        )
+        collector = MagicMock()
+        values: dict = {}
+
+        def inc_value(key, count=1):
+            values[key] = values.get(key, 0) + count
+
+        def set_value(key, value):
+            values[key] = value
+
+        collector.inc_value.side_effect = inc_value
+        collector.set_value.side_effect = set_value
+
+        mock_session = MagicMock()
+        mock_session.get.side_effect = CurlProxy("curl: (56) Proxy CONNECT aborted")
+        mock_cls = MagicMock(return_value=mock_session)
+        with patch("scrapy_stealth.engines.turbo.Session", mock_cls):
+            engine = TurboEngine()
+            engine.set_stats(collector)
+            engine._default_proxy = "http://p1:8080"
+            with pytest.raises(StealthConnectionError):
+                engine._execute(
+                    Request(
+                        "https://scdn.example/img.jpg",
+                        meta={"stealth": {"proxy": "http://p1:8080"}},
+                    )
+                )
+            assert engine._default_proxy == "http://p2:8080"
+            assert values.get("stealth/proxy/connection_failures") == 1
+            assert values.get("stealth/proxy/connection_failures/turbo") == 1
+            assert values.get("stealth/proxy/rotations") == 1
+            assert values.get("stealth/proxy/last_connection_failure") == "p1:8080"
 
     def test_session_reused_for_same_profile(self, session_patch):
         mock_cls, _ = session_patch
@@ -876,7 +947,14 @@ class TestBrowserEngine:
     def test_execute_do_fetch_receives_prepared_request(self, engine):
         captured = {}
 
-        async def fake_fetch(url, prepared, settle, snapshot=False, block_assets=False):
+        async def fake_fetch(
+            url,
+            prepared,
+            settle,
+            profile,
+            snapshot=False,
+            block_assets=False,
+        ):
             captured.update(
                 {
                     "url": url,
@@ -891,6 +969,7 @@ class TestBrowserEngine:
                 200,
                 None,
                 {"content-type": "text/html; charset=utf-8"},
+                [],
             )
 
         with patch.object(engine, "_do_fetch", side_effect=fake_fetch):
@@ -911,6 +990,48 @@ class TestBrowserEngine:
         assert captured["headers"] == {
             "Content-Type": "application/x-www-form-urlencoded"
         }
+
+    def test_execute_exports_browser_cookies_on_response(self, engine):
+        cookies = [
+            {
+                "name": "session",
+                "value": "abc123",
+                "domain": "example.com",
+                "path": "/",
+                "secure": False,
+                "httpOnly": True,
+                "session": False,
+                "expires": None,
+            }
+        ]
+
+        async def fake_fetch(
+            url,
+            prepared,
+            settle,
+            profile,
+            snapshot=False,
+            block_assets=False,
+        ):
+            return (
+                b"<html></html>",
+                200,
+                None,
+                {"content-type": "text/html; charset=utf-8"},
+                cookies,
+            )
+
+        with patch.object(engine, "_do_fetch", side_effect=fake_fetch):
+            response = engine._execute(
+                Request(
+                    "https://example.com/login",
+                    method="POST",
+                    body=b"user=admin&pass=secret",
+                )
+            )
+
+        assert response.meta["stealth"]["browser_cookies"] == cookies
+        assert response.meta["stealth"]["browser_cookie_header"] == "session=abc123"
 
     def test_execute_returns_none_on_exception(self, engine, mock_browser):
         mock_browser.send = AsyncMock(side_effect=Exception("network error"))
@@ -951,12 +1072,33 @@ class TestBrowserEngine:
             )
         assert mock_ensure.call_args.kwargs["headless"] is False
 
+    def test_execute_uses_visible_browser_by_default(self, engine):
+        with patch.object(engine, "_ensure_browser_unlocked") as mock_ensure:
+            engine._execute(
+                Request(
+                    "https://example.com",
+                    meta={"stealth": {"driver": "browser"}},
+                )
+            )
+        assert mock_ensure.call_args.kwargs["headless"] is False
+
     def test_execute_uses_config_headless_default(self, engine):
         with patch.object(engine, "_ensure_browser_unlocked") as mock_ensure:
             engine._execute(Request("https://example.com"))
         assert mock_ensure.call_args.kwargs["headless"] == config.get(
             "BROWSER_HEADLESS"
         )
+        assert mock_ensure.call_args.kwargs["headless"] is False
+
+    def test_execute_respects_headless_true_in_meta(self, engine):
+        with patch.object(engine, "_ensure_browser_unlocked") as mock_ensure:
+            engine._execute(
+                Request(
+                    "https://example.com",
+                    meta={"stealth": {"driver": "browser", "headless": True}},
+                )
+            )
+        assert mock_ensure.call_args.kwargs["headless"] is True
 
     def test_execute_passes_proxy_to_do_fetch(self, engine):
         with patch.object(
@@ -968,6 +1110,7 @@ class TestBrowserEngine:
                 200,
                 None,
                 {"content-type": "text/html; charset=utf-8"},
+                [],
             ),
         ) as mock_fetch:
             engine._execute(
@@ -983,13 +1126,21 @@ class TestBrowserEngine:
     def test_execute_uses_custom_settle_from_meta(self, engine):
         captured = []
 
-        async def fake_fetch(url, prepared, settle, snapshot=False, block_assets=False):
+        async def fake_fetch(
+            url,
+            prepared,
+            settle,
+            profile,
+            snapshot=False,
+            block_assets=False,
+        ):
             captured.append(settle)
             return (
                 b"<html></html>",
                 200,
                 None,
                 {"content-type": "text/html; charset=utf-8"},
+                [],
             )
 
         with patch.object(engine, "_do_fetch", side_effect=fake_fetch):
@@ -1001,13 +1152,21 @@ class TestBrowserEngine:
     def test_execute_uses_config_settle_default(self, engine):
         captured = []
 
-        async def fake_fetch(url, prepared, settle, snapshot=False, block_assets=False):
+        async def fake_fetch(
+            url,
+            prepared,
+            settle,
+            profile,
+            snapshot=False,
+            block_assets=False,
+        ):
             captured.append(settle)
             return (
                 b"<html></html>",
                 200,
                 None,
                 {"content-type": "text/html; charset=utf-8"},
+                [],
             )
 
         with patch.object(engine, "_do_fetch", side_effect=fake_fetch):
@@ -1160,6 +1319,7 @@ class TestBrowserEngine:
                 200,
                 None,
                 {"content-type": "text/html; charset=utf-8"},
+                [],
             )
 
         with patch.object(engine, "_do_fetch", side_effect=fetch_once_then_cancel):

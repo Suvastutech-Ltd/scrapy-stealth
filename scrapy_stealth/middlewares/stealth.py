@@ -9,16 +9,21 @@ from ..config import config
 from ..engines.browser import BrowserEngine
 from ..manager import EngineManager
 from ..strategies.proxy import ProxyRotator
+from ..strategies.proxy_health import get_proxy_health_registry
+from ..strategies.throttle import get_throttle_registry
+from ..utils.browser.cookies import merge_browser_cookies_to_jar
 from ..utils.core.console import console
-from ..utils.core.logger import get_logger
+from ..utils.core.logger import configure_stealth_logging, get_logger
 from ..utils.core.meta import (
     _apply_stealth_enabled_defaults,
     _get_meta_data,
     _resolve_engine,
+    apply_browser_driver_defaults,
 )
 from ..utils.engine.fallback import (
     FALLBACK_DRIVER,
     mark_fallback_done,
+    request_method,
     should_driver_fallback,
 )
 from ..utils.network.dns import validate_dns_overrides
@@ -49,6 +54,8 @@ class StealthDownloaderMiddleware:
     def from_crawler(cls, crawler: Any) -> StealthDownloaderMiddleware:
         proxies = crawler.settings.getlist("STEALTH_PROXIES", [])
         stealth_enabled = crawler.settings.getbool("STEALTH_ENABLED", False)
+        config.STEALTH_LOGS = crawler.settings.getbool("STEALTH_LOGS", True)
+        configure_stealth_logging(config.STEALTH_LOGS)
         mw = cls(proxies=proxies, stealth_enabled=stealth_enabled, crawler=crawler)
         crawler.signals.connect(mw.spider_opened, signal=signals.spider_opened)
         crawler.signals.connect(mw.spider_closed, signal=signals.spider_closed)
@@ -60,9 +67,13 @@ class StealthDownloaderMiddleware:
 
     def spider_opened(self, spider: Any) -> None:
         settings = spider.crawler.settings
+        config.STEALTH_LOGS = settings.getbool("STEALTH_LOGS", config.STEALTH_LOGS)
+        configure_stealth_logging(config.STEALTH_LOGS)
         proxies = settings.getlist("STEALTH_PROXIES", [])
         self._proxy_rotator = ProxyRotator(proxies=proxies)
         config.STEALTH_PROXIES = list(self._proxy_rotator.proxies)
+        get_proxy_health_registry().reset()
+        get_throttle_registry().reset()
         self.manager.seed_proxies()
         stats = spider.crawler.stats
         self._stealth_stats = StealthStats(stats)
@@ -72,10 +83,14 @@ class StealthDownloaderMiddleware:
         )
         if driver := settings.get("STEALTH_DRIVER"):
             config.STEALTH_DRIVER = driver
+        if (recycle_after := settings.get("STEALTH_RECYCLE_AFTER_BANS")) is not None:
+            config.STEALTH_RECYCLE_AFTER_BANS = int(recycle_after)
         if (no_sandbox := settings.get("BROWSER_NO_SANDBOX")) is not None:
             config.BROWSER_NO_SANDBOX = no_sandbox
         if (executable_path := settings.get("BROWSER_EXECUTABLE_PATH")) is not None:
             config.BROWSER_EXECUTABLE_PATH = executable_path
+        if (export_cookies := settings.get("BROWSER_EXPORT_COOKIES")) is not None:
+            config.BROWSER_EXPORT_COOKIES = bool(export_cookies)
         if (assets_block := settings.get("BROWSER_STATIC_ASSETS_BLOCK")) is not None:
             config.BROWSER_STATIC_ASSETS_BLOCK = bool(assets_block)
         if settings.get("BROWSER_PROXY_BYPASS_LIST") is not None:
@@ -89,6 +104,11 @@ class StealthDownloaderMiddleware:
                 "Loaded %d DNS overrides from spider settings",
                 len(config.STEALTH_DNS_OVERRIDES),
             )
+        if (cdp_url := settings.get("STEALTH_CDP_URL")) is not None:
+            config.STEALTH_CDP_URL = str(cdp_url) if cdp_url else None
+        cdp_kwargs = settings.get("STEALTH_CDP_CONNECT_KWARGS")
+        if isinstance(cdp_kwargs, dict):
+            config.STEALTH_CDP_CONNECT_KWARGS = dict(cdp_kwargs)
         logger.debug("Loaded %d proxies from spider settings", len(proxies))
 
     @property
@@ -100,6 +120,7 @@ class StealthDownloaderMiddleware:
 
     async def process_request(self, request: Request) -> Response | None:
         _apply_stealth_enabled_defaults(request, self._stealth_enabled)
+        apply_browser_driver_defaults(request)
 
         engine_name = _resolve_engine(request, config.get("DEFAULT_ENGINE"))
         driver = _get_meta_data(request, "driver")
@@ -132,10 +153,11 @@ class StealthDownloaderMiddleware:
 
         console.info(
             f"Driver fallback {primary_driver!r} -> {FALLBACK_DRIVER!r} "
-            f"for {request.url!r} after HTTP {response.status}"
+            f"for {request.method} {request.url!r} after HTTP {response.status}"
         )
         mark_fallback_done(request, primary_driver)
-        self._stealth_stats.record_fallback(primary_driver, FALLBACK_DRIVER)
+        method = request_method(request)
+        self._stealth_stats.record_fallback(primary_driver, FALLBACK_DRIVER, method)
         self._stealth_stats.record_request(FALLBACK_DRIVER)
 
         fallback_engine = self.manager.get(engine_name, FALLBACK_DRIVER)
@@ -149,3 +171,50 @@ class StealthDownloaderMiddleware:
             return response
 
         return fallback_response if fallback_response is not None else response
+
+    def _cookie_jar(self, request: Request) -> Any | None:
+        """Return Scrapy's ``CookiesMiddleware`` jar for this request."""
+        if self._crawler is None:
+            return None
+        try:
+            from scrapy.downloadermiddlewares.cookies import CookiesMiddleware
+
+            downloader = self._crawler.engine.downloader
+            for mw in downloader.middleware.middlewares:
+                if isinstance(mw, CookiesMiddleware):
+                    return mw.jars[request.meta.get("cookiejar")]
+        except Exception:
+            return None
+        return None
+
+    async def process_response(
+        self, request: Request, response: Response, spider: Any
+    ) -> Response:
+        try:
+            stealth = response.meta.get("stealth")
+        except AttributeError:
+            # Failed downloads may pass a response object not tied to the request.
+            return response
+        if not isinstance(stealth, dict):
+            return response
+
+        cookies = stealth.get("browser_cookies")
+        if not cookies:
+            return response
+
+        export = _get_meta_data(
+            request, "export_cookies", config.get("BROWSER_EXPORT_COOKIES")
+        )
+        if not export:
+            return response
+
+        if self._crawler is None:
+            return response
+
+        if not self._crawler.settings.getbool("COOKIES_ENABLED", True):
+            return response
+
+        jar = self._cookie_jar(request)
+        merged = merge_browser_cookies_to_jar(jar, request, cookies)
+        self._stealth_stats.record_browser_cookies(merged)
+        return response

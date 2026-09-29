@@ -39,6 +39,30 @@ class TestStealthDownloaderMiddleware:
         assert mw.spider_opened in connected
         assert mw.spider_closed in connected
 
+    def test_from_crawler_applies_stealth_logs_setting(self):
+        with patch("scrapy_stealth.engines.basic.Client"):
+            with patch(
+                "scrapy_stealth.middlewares.stealth.update_available"
+            ) as mock_update:
+                crawler = MagicMock()
+                crawler.settings.getbool.side_effect = lambda key, default=False: (
+                    False if key == "STEALTH_LOGS" else default
+                )
+                StealthDownloaderMiddleware.from_crawler(crawler)
+        assert config.STEALTH_LOGS is False
+        mock_update.assert_called_once()
+
+    def test_spider_opened_reloads_stealth_logs(self):
+        with patch("scrapy_stealth.engines.basic.Client"):
+            middleware = StealthDownloaderMiddleware()
+        spider = MagicMock()
+        spider.crawler.settings.getbool.side_effect = lambda key, default=None: (
+            False if key == "STEALTH_LOGS" else default
+        )
+        spider.crawler.settings.getlist.return_value = []
+        middleware.spider_opened(spider)
+        assert config.STEALTH_LOGS is False
+
     def test_spider_closed_closes_engines(self, middleware, spider):
         with patch.object(middleware.manager, "close") as mock_close:
             middleware.spider_closed(spider)
@@ -150,7 +174,51 @@ class TestStealthDownloaderMiddleware:
         assert request.meta["stealth"]["headless"] is False
         crawler.stats.inc_value.assert_any_call("stealth/fallbacks", 1)
         crawler.stats.inc_value.assert_any_call("stealth/fallbacks/turbo", 1)
+        crawler.stats.inc_value.assert_any_call("stealth/fallbacks/method/get", 1)
         fallback.fetch.assert_awaited_once()
+
+    def test_driver_fallback_on_post_403(self, spider):
+        crawler = MagicMock()
+        challenge = _make_html_response(body=b"Forbidden", status=403)
+        browser_ok = _make_html_response(body=b"<html><body>ok</body></html>")
+        primary = MagicMock()
+        primary.driver_name = "turbo"
+        primary.fetch = AsyncMock(return_value=challenge)
+        fallback = MagicMock()
+        fallback.driver_name = "browser"
+        fallback.fetch = AsyncMock(return_value=browser_ok)
+
+        with patch("scrapy_stealth.engines.basic.Client"):
+            middleware = StealthDownloaderMiddleware(crawler=crawler)
+        request = Request(
+            "https://example.com/login",
+            method="POST",
+            body=b"user=1&pass=2",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            meta={"stealth": {"driver": "auto"}},
+        )
+        with patch.object(middleware.manager, "get", side_effect=[primary, fallback]):
+            result = asyncio.run(middleware.process_request(request))
+
+        assert result is browser_ok
+        assert request.method == "POST"
+        assert request.body == b"user=1&pass=2"
+        crawler.stats.inc_value.assert_any_call("stealth/fallbacks/method/post", 1)
+        fallback.fetch.assert_awaited_once()
+        assert fallback.fetch.await_args.args[0] is request
+
+    def test_browser_driver_defaults_to_visible_window(self, middleware, spider):
+        request = Request(
+            "https://example.com",
+            meta={"stealth": {"driver": "browser"}},
+        )
+        with patch.object(middleware.manager, "get") as mock_get:
+            mock_engine = MagicMock()
+            mock_engine.driver_name = "browser"
+            mock_engine.fetch = AsyncMock(return_value=_make_html_response())
+            mock_get.return_value = mock_engine
+            asyncio.run(middleware.process_request(request))
+        assert request.meta["stealth"]["headless"] is False
 
     def test_no_driver_fallback_without_auto_driver(self, middleware, spider):
         challenge = _make_html_response(
@@ -301,10 +369,18 @@ class TestStealthDownloaderMiddleware:
     def test_from_crawler_reads_stealth_enabled_setting(self):
         crawler = MagicMock()
         crawler.settings.getlist.return_value = []
-        crawler.settings.getbool.return_value = True
+
+        def getbool(key, default=False):
+            if key == "STEALTH_ENABLED":
+                return True
+            if key == "STEALTH_LOGS":
+                return True
+            return default
+
+        crawler.settings.getbool.side_effect = getbool
         with patch("scrapy_stealth.engines.basic.Client"):
             mw = StealthDownloaderMiddleware.from_crawler(crawler)
-        crawler.settings.getbool.assert_called_with("STEALTH_ENABLED", False)
+        crawler.settings.getbool.assert_any_call("STEALTH_ENABLED", False)
         assert mw._stealth_enabled is True
 
     # -------------------------------------------------------------------
@@ -325,6 +401,20 @@ class TestStealthDownloaderMiddleware:
         finally:
             config.STEALTH_DRIVER = original
 
+    def test_spider_opened_sets_recycle_settings_from_settings(self, middleware):
+        spider = MagicMock()
+        spider.crawler.settings.getlist.return_value = []
+        spider.crawler.settings.getbool.return_value = False
+        spider.crawler.settings.get.side_effect = lambda key, default=None: (
+            2 if key == "STEALTH_RECYCLE_AFTER_BANS" else None
+        )
+        original_after = config.get("STEALTH_RECYCLE_AFTER_BANS")
+        try:
+            middleware.spider_opened(spider)
+            assert config.get("STEALTH_RECYCLE_AFTER_BANS") == 2
+        finally:
+            config.STEALTH_RECYCLE_AFTER_BANS = original_after
+
     def test_spider_opened_no_stealth_driver_leaves_config_unchanged(self, middleware):
         spider = MagicMock()
         spider.crawler.settings.getlist.return_value = []
@@ -337,7 +427,13 @@ class TestStealthDownloaderMiddleware:
     def test_from_crawler_triggers_update_check(self):
         crawler = MagicMock()
         crawler.settings.getlist.return_value = []
-        crawler.settings.getbool.return_value = False
+
+        def getbool(key, default=False):
+            if key == "STEALTH_LOGS":
+                return True
+            return default
+
+        crawler.settings.getbool.side_effect = getbool
         with (
             patch("scrapy_stealth.engines.basic.Client"),
             patch("scrapy_stealth.middlewares.stealth.update_available") as mock_check,

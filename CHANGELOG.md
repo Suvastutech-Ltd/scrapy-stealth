@@ -7,9 +7,273 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
 ---
 
-## [Unreleased]
+## [1.0.1] - 2026-09-25
+
+### Changed
+
+* **External CDP URL handling** — Classify endpoints by scheme: `http`/`https` use JSON
+  discovery; `ws`/`wss` at the root (`ws://host:9222/`) behave like the HTTP debug port;
+  full `ws(s)://…/devtools/…` paths connect directly. Clearer errors when a copied browser
+  WebSocket URL is stale (HTTP 404).
+* **Documentation** — Browser driver defaults (visible Chrome); external CDP URL examples.
+* **`SECURITY.md`** — Supported versions (1.0.x); CDP/relay scope; operational guidance for
+  CDP URLs, relay firewall, and snapshots.
+
+---
+
+## [1.0.0] - 2026-09-24
+
+### Added
+
+* **Browser snapshots — full scrollable page** — `snapshot=True` captures the full
+  document via CDP `Page.getLayoutMetrics` + clip (not only the viewport).
+* **External CDP connect for the browser driver**
+  Set `STEALTH_CDP_URL` (and optional `STEALTH_CDP_CONNECT_KWARGS` with `headers`, `timeout`,
+  `verify_ssl`) to attach to a local `:9222` debug port, Fortress, or a remote CDP endpoint
+  instead of launching Chrome. Per-request overrides: `meta["stealth"]["cdp_url"]` and
+  `meta["stealth"]["cdp_connect_kwargs"]`. External browsers are disconnected on spider close,
+  not killed.
+* **`StealthCdpConnectionError`** — Dedicated exception when external CDP is configured but
+  unreachable; exposes `.cdp_url` and is not a subclass of `ConnectionError` (no default
+  Scrapy retries).
+
+### Changed
+
+* **Engine imports** — `BasicEngine` / `TurboEngine` load lazily so browser-only workflows
+  need not import `wreq` at package startup.
+* **Relay logging** — CONNECT relay startup uses DEBUG instead of styled console INFO for
+  external CDP.
+
+### Fixed
+
+* **External CDP — no splash navigation** — When `STEALTH_CDP_URL` is set, the browser
+  engine no longer opens the package splash URL on the connected browser's default tab.
+* **External CDP — proxy and DNS** — `STEALTH_PROXIES`, per-request `proxy`, and DNS
+  overrides again use the local CONNECT relay; CDP tabs are created in a browser context
+  with `proxyServer` pointed at that relay.
+* **External CDP relay auto-config** — CONNECT relay bind/advertise addresses are chosen
+  automatically (LAN IP + `0.0.0.0` for external CDP; `127.0.0.1` for local Brave).
+* **External CDP + proxy only (no auth)** — Optional direct upstream `proxyServer` when
+  the proxy URL has no credentials; authenticated proxies and DNS pin always use the relay.
+* **CDP connect errors** — If `STEALTH_CDP_URL` is set but nothing is listening, raise
+  `StealthCdpConnectionError` (compact message; startup hints at DEBUG) instead of
+  nodriver’s generic failure text or a misleading downstream HTTP response. Unlike
+  `StealthConnectionError`, it is not retried by Scrapy’s default retry middleware.
+
+---
+
+## [0.9.0] - 2026-09-22
+
+### Added
+
+* **Read the Docs documentation** — MkDocs Material site at
+  [scrapy-stealth.readthedocs.io](https://scrapy-stealth.readthedocs.io/en/latest/), built from `docs/` via
+  `.readthedocs.yaml`. Install docs locally with `pip install -e ".[docs]"` and `mkdocs serve`.
+* **Docs navigation** — getting started, configuration, drivers, guides, and reference sections, including
+  comparison table, feature list, anti-bot detection, strategies, example spider, stats, troubleshooting, and
+  changelog (synced from this file).
+* **Package documentation URLs** — `pyproject.toml` `Homepage`, `Documentation`, and `Changelog` project URLs
+  point to Read the Docs. Exports `scrapy_stealth.__docs_url__` and `scrapy_stealth.__changelog_url__` from
+  installed distribution metadata.
+
+### Fixed
+
+* **Request cookies on stealth drivers** — `resolve_cookie_header()` merges the `Cookie` header (from
+  `CookiesMiddleware` or manual headers) with `Request.cookies` in `build_stealth_request()`. HTTP and browser
+  engines no longer drop cookies that exist only on the Scrapy request; explicit `Request.cookies` win on duplicate
+  names.
+
+### Changed
+
+* **README** — shortened to logo, badges, sponsors, install, minimal setup, and a documentation index table.
+  Long-form guides, settings reference, and examples now live on Read the Docs only.
+* **Settings reference** — full `config` attribute table moved into `docs/configuration/settings.md` (no longer
+  duplicated in README).
+* **Tests** — example CDN and media URLs use `cdn.example.com` consistently across browser, DNS, and decorator tests.
+
+### Removed
+
+* **Proxy-Seller sponsor** — removed from README and `AGENTS.md` (partnership ended; logo kept under
+  `docs/static/sponsors/` for possible reinstatement).
+
+---
+
+## [0.8.2] - 2026-09-02
+
+### Added
+
+* **`STEALTH_LOGS`** — toggle styled `[scrapy-stealth]` console output and package logger
+  messages. Default **`True`** (unchanged behaviour). Set `STEALTH_LOGS = False` in
+  `settings.py` / `custom_settings`, or `config.STEALTH_LOGS = False` before the spider
+  runs, to silence stealth logs. The PyPI update notice is always shown when a newer
+  version exists, regardless of this setting.
+
+---
+
+## [0.8.1] - 2026-08-31
+
+### Added
+
+* **Adaptive rate limiting (auto-enabled)**
+  Per-domain smart throttle on every stealth driver — no settings or meta flags.
+
+  * Tracks HTTP **429**, **`Retry-After`**, and response latency per domain + driver.
+  * **AIMD** spacing: backs off on rate limits, eases delay after success streaks.
+  * Behavioral timing jitter on `basic`/`turbo` is folded into the throttle wait.
+  * Stats: `stealth/throttle/waits`, `stealth/throttle/wait_ms`,
+    `stealth/throttle/rate_limited`, `stealth/throttle/retry_after`
+    (each with a `{driver}` breakdown where applicable).
+
+  New module: `scrapy_stealth/strategies/throttle.py`.
+
+---
+
+## [0.8.0] - 2026-08-27
+
+### Added
+
+* **Behavioral fingerprinting engine (auto-enabled)**
+  Human-like interaction runs automatically on every stealth driver.
+
+  * **`browser`** — after each GET navigation: viewport emulation from the active
+    fingerprint profile (desktop vs mobile), Bezier-curved CDP mouse paths via
+    `Input.dispatchMouseEvent` (`mouseMoved`), CDP scroll (`mouseWheel`), and an
+    occasional keyboard nudge.
+  * **`basic` / `turbo`** — profile-seeded pre-request timing jitter (~30–350 ms);
+    no DOM is available on HTTP drivers, so mouse/scroll are not simulated there.
+
+  New package: `scrapy_stealth/behaviors/` (`engine`, `patterns`, `viewport`,
+  `noise`, `timing`). Exports include `simulate_hover()` for custom CDP mouse paths.
+
+### Changed
+
+* **Browser behavioral input — CDP instead of JavaScript**
+  Mouse and scroll replay previously used `document.dispatchEvent()` (untrusted,
+  invisible to the OS cursor). They now use Chrome DevTools Protocol input events,
+  which anti-bot behavioral checks are more likely to treat as real browser input.
+
+---
+
+## [0.7.1] - 2026-08-26
+
+### Added
+
+* **Smart Proxy Management**
+  Per-domain proxy health tracking for turbo/basic engines: dead proxies (407,
+  CONNECT aborted, tunnel errors) and repeated blocks (403 by default) open a
+  temporary cooldown, skip the bad entry during rotation, and automatically
+  switch to the next proxy in `STEALTH_PROXIES`. Telemetry is exposed in
+  `crawler.stats`: `stealth/proxy/connection_failures`,
+  `stealth/proxy/cooldowns`, `stealth/proxy/rotations` (each with a `{driver}`
+  breakdown), plus `stealth/proxy/last_connection_failure` and
+  `stealth/proxy/last_cooldown` (`host:port` only — credentials never appear
+  in stats). Controlled by `STEALTH_PROXY_HEALTH`, `STEALTH_PROXY_CIRCUIT_AFTER`,
+  `STEALTH_PROXY_COOLDOWN_S`, and `STEALTH_PROXY_CIRCUIT_CODES`.
+
+* **`STEALTH_RECYCLE_AFTER_BANS` in Scrapy settings**
+  The middleware now loads `STEALTH_RECYCLE_AFTER_BANS` from `settings.py` or
+  spider `custom_settings` on spider open (same pattern as `STEALTH_DRIVER` and
+  `STEALTH_PROXIES`).
+
+### Fixed
+
+* **Smart Proxy Management — cooldown log spam**
+  Repeated failures on a proxy already in cooldown no longer re-print the
+  cooldown warning on every request.
+
+---
+
+## [0.7.0] - 2026-08-25
+
+### Changed
+
+* **Random default browser profile**
+  Removed static `DEFAULT_PROFILE` (`chrome_147`). When no profile is set on a
+  request, engines pick a weighted random profile from the fingerprint pool via
+  `ProfileRotator`. Pin a profile with `meta["stealth"]["profile"]` or
+  `BasicEngine(profile="chrome_147")`.
+
+### Fixed
+
+* **Browser driver — Cloudflare challenge wait on 403/503**
+  The browser engine now runs the JS challenge wait loop on 403/503 interstitials
+  (e.g. Cloudflare “Just a moment” or “Performing security verification”), not
+  only on HTTP 2xx. Challenge pages poll for up to `BROWSER_CHALLENGE_TIMEOUT_S`
+  (default 30s) instead of returning challenge HTML immediately.
+
+* **Browser driver — JPG/PNG/binary asset bodies**
+  Chrome’s built-in image viewer returns HTML (`<img src="...jpg">`) in the DOM.
+  Direct GET/HEAD to asset URLs (`.jpg`, `.png`, `.gif`, `.pdf`, …) now return
+  raw bytes: CDP `Network.getResponseBody` first, then in-page `fetch()` when the
+  network/DOM response is HTML. Prefers the latest 2xx network response over an
+  earlier 403 challenge body. Fixes CDN assets behind Cloudflare (e.g.
+  `scdn.autodoc.de/.../*.jpg`).
+
+* **`wreq.emulation` import typo**
+  Fixed `from wreq.eulation import Profile` in profile resolution that caused
+  startup failure with a misleading Visual C++ runtime error on Windows.
+
+### Added
+
+* **`BROWSER_CHALLENGE_TIMEOUT_S`** — max seconds to wait on JS challenge /
+  Cloudflare interstitial pages (default `30.0`). Configurable via settings /
+  `scrapy_stealth.config.config`.
+
+* **Cloudflare Turnstile / managed-challenge detection** — expanded signatures
+  for `challenges.cloudflare.com`, `cf-turnstile`, “Verify you are human”, and
+  “Performing security verification” titles.
+
+* **Turbo driver — HTTP/3 (QUIC) support**
+  Opt-in via `config.HTTP3 = True` or `meta["stealth"]["http3"] = True`.
+  Uses curl_cffi `CurlHttpVersion.V3` with HTTP/3-capable impersonate presets
+  (e.g. `chrome150`). Requires a UDP-capable proxy for QUIC.
+
+* **Turbo driver — browser header order**
+  Turbo sends cookies through curl_cffi’s cookies API (not a raw `Cookie`
+  header) so they don’t disrupt the header order applied by the impersonate
+  preset.
+
+* **Turbo impersonate presets bumped to `chrome150`**
+  Chromium-family profiles now map to curl_cffi’s latest Chrome preset.
+
+* **Dependency: `curl_cffi>=0.16.1`**
+  Required for HTTP/3 options and updated curl-impersonate backend.
+
+---
+
+## [0.6.16] - 2026-08-19
+
+### Changed
+
+* **Browser driver defaults to visible Chrome (`headless=False`)**
+  Explicit `driver="browser"` and `driver="auto"` browser fallback now open a visible
+  window by default. Set `meta={"stealth": {"headless": True}}` or `BROWSER_HEADLESS = True`
+  to opt into headless mode.
+
+### Added
+
+* **Browser cookie handoff**
+  After each browser response, tab cookies are read via CDP and exposed on the response as
+  `meta["stealth"]["browser_cookies"]` and `meta["stealth"]["browser_cookie_header"]`.
+  When `COOKIES_ENABLED` and `BROWSER_EXPORT_COOKIES` are on (both default), cookies merge
+  into Scrapy's jar so follow-up `basic`/`turbo` requests reuse the session (login with
+  browser → scrape with turbo). Stats: `stealth/browser_cookies_exported`.
+
+* **Browser form POST — hidden field merge**
+  Urlencoded POST bodies on the browser driver automatically merge hidden `<form>` fields
+  (e.g. `csrf_token`) from the loaded page before in-page `fetch()`.
+
+* **`driver="auto"` POST fallback**
+  When turbo/basic POST gets a JS challenge or session ban (403/429/503, Cloudflare, etc.),
+  middleware retries once with the browser driver using the same method, body, and headers.
+  Stats: `stealth/fallbacks/method/post` (and `put`, `patch`, `delete`).
+
+* **Proxy-Seller sponsor**
+  README and `AGENTS.md` now include Proxy-Seller with affiliate link, promo code `FAWAD15`, and logo assets under `docs/static/sponsors/`.
 
 ---
 
@@ -143,7 +407,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the spider finishes instead of lingering until process exit.
 
 * **Full spider example**
-  [`examples/full_spider.py`](examples/full_spider.py) demonstrates settings,
+  [`examples/full_spider.py`](https://github.com/fawadss1/scrapy-stealth/blob/master/examples/full_spider.py) demonstrates settings,
   per-request drivers, snapshots, ban detection, and stealth stats. README links
   to it instead of embedding a long copy.
 
@@ -612,7 +876,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Xvfb virtual display support for Docker / Zyte**
+- **Xvfb virtual display support for Docker / headless Linux**
   On Linux without a `$DISPLAY`, the browser engine now automatically starts
   `Xvfb :99` before launching Chrome. This lets Chrome run in non-headless mode
   against a virtual framebuffer — identical to a real desktop session — which is
@@ -629,19 +893,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`BROWSER_NO_SANDBOX` config option**
   New `BROWSER_NO_SANDBOX: bool | None` setting controls Chrome's sandbox mode.
   Defaults to `None` (auto-detect): sandbox is disabled automatically when the process runs
-  as root on Linux (e.g. Zyte, Docker). Set `True` to force no-sandbox, `False` to keep
+  as root on Linux (e.g. Docker). Set `True` to force no-sandbox, `False` to keep
   sandbox even as root. Configurable via `settings.py` (`BROWSER_NO_SANDBOX = True`) or
   the `config` object.
 
 ### Fixed
 
-- **Browser engine fails on Zyte / Docker (running as root)**
+- **Browser engine fails on Docker (running as root)**
   Chrome refuses to start without `--no-sandbox` when the process is root. The engine now
   auto-detects root and adds both `--no-sandbox` and `--disable-dev-shm-usage` (required
   in containers with limited `/dev/shm`).
 
 - **`headless=False` crashes in display-less environments**
-  When no `$DISPLAY` is set on Linux (Docker, Zyte, CI), the engine now silently overrides
+  When no `$DISPLAY` is set on Linux (Docker, CI), the engine now silently overrides
   `headless=False` to `headless=True`, preventing Chrome from crashing on startup.
 
 ---
@@ -769,7 +1033,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Zyte (ScrapyCloud) — `FileException: download-error` on `scrapy:2.15` stack**
+- **ScrapyCloud — `FileException: download-error` on `scrapy:2.15` stack**
   `BaseEngine.fetch()` used Twisted's `deferToThread` to run blocking HTTP calls in a thread pool.
   On Scrapy 2.15 / Python 3.14, the media pipeline's fully-async architecture relies on native
   asyncio awaiting; the Twisted→asyncio bridge no longer reliably resolved these Deferreds, causing
@@ -777,15 +1041,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BaseEngine.fetch()` is now `async def` and uses `asyncio.get_running_loop().run_in_executor()`.
   `ScrapyEngine.fetch()` and `StealthDownloaderMiddleware.process_request()` are also made `async`.
 
-- **Zyte (ScrapyCloud) — `ImportError: cannot import name 'request_fingerprint'` on `scrapy:2.11` stack**
-  The previous `scrapy>=2.15.2` constraint forced pip to upgrade Scrapy on Zyte's `scrapy:2.11`
-  stack, which broke Zyte's bundled `sh_scrapy` extension that still imports `request_fingerprint`
+- **ScrapyCloud — `ImportError: cannot import name 'request_fingerprint'` on `scrapy:2.11` stack**
+  The previous `scrapy>=2.15.2` constraint forced pip to upgrade Scrapy on hosted `scrapy:2.11`
+  stacks, which broke bundled `sh_scrapy` extensions that still import `request_fingerprint`
   (removed in Scrapy 2.15). The constraint is now `scrapy>=2.12.0,<3.0`.
 
 - **All Scrapy versions — unified async dispatch in `BaseEngine.fetch`**
   Scrapy routes async downloader middlewares through different runners depending on version:
   `ensure_awaitable` (newer Scrapy / local) runs coroutines as asyncio Tasks and requires an
-  asyncio Future; `deferred_from_coro` (Zyte `scrapy:2.11–2.12`) drives them via Twisted
+  asyncio Future; `deferred_from_coro` (hosted `scrapy:2.11–2.12` stacks) drives them via Twisted
   `_inlineCallbacks` and requires a Twisted Deferred. `BaseEngine.fetch` now detects the active
   runner via `asyncio.get_running_loop()` and dispatches to `run_in_executor` or `deferToThread`
   accordingly, making stealth requests work correctly on all supported Scrapy versions.
@@ -807,8 +1071,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Zyte (ScrapyCloud) — `ValueError: invalid literal for int()` on `download_latency`**
-  `BaseEngine._execute_timed` stored download latency as a formatted string (`"0.18s"`) instead of a numeric value. Zyte's `sh_scrapy`
+- **ScrapyCloud — `ValueError: invalid literal for int()` on `download_latency`**
+  `BaseEngine._execute_timed` stored download latency as a formatted string (`"0.18s"`) instead of a numeric value. Hosted `sh_scrapy`
   pipe writer calls `int(duration)` and expects a plain number; the string caused a `ValueError` at response write time, and the string
   was repeated across concurrent/retried requests making it unreadable.
   `download_latency` is now stored as a plain `float` (e.g. `0.18`), consistent with Scrapy's own HTTP downloader.
@@ -1065,6 +1329,22 @@ New `decorators` package with a `snapshot` decorator that auto-saves the PNG to 
 - `StealthConfig` for centralised configuration defaults
 
 ---
+
+[Unreleased]: https://github.com/fawadss1/scrapy-stealth/compare/v0.9.0...HEAD
+
+[0.9.0]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.9.0
+
+[0.8.2]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.8.2
+
+[0.8.1]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.8.1
+
+[0.8.0]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.8.0
+
+[0.7.1]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.7.1
+
+[0.7.0]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.7.0
+
+[0.6.16]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.6.16
 
 [0.6.13]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.6.13
 
