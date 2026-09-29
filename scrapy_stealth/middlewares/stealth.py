@@ -9,12 +9,21 @@ from ..config import config
 from ..engines.browser import BrowserEngine
 from ..manager import EngineManager
 from ..strategies.proxy import ProxyRotator
-from ..utils.console import console
-from ..utils.dns import validate_dns_overrides
-from ..utils.logger import get_logger
-from ..utils.meta import STEALTH_KEY, _get_meta_data, _resolve_engine
-from ..utils.stats import StealthStats
-from ..utils.updates import update_available
+from ..utils.core.console import console
+from ..utils.core.logger import get_logger
+from ..utils.core.meta import (
+    _apply_stealth_enabled_defaults,
+    _get_meta_data,
+    _resolve_engine,
+)
+from ..utils.engine.fallback import (
+    FALLBACK_DRIVER,
+    mark_fallback_done,
+    should_driver_fallback,
+)
+from ..utils.network.dns import validate_dns_overrides
+from ..utils.telemetry.stats import StealthStats
+from ..utils.telemetry.updates import update_available
 
 logger = get_logger()
 
@@ -82,9 +91,15 @@ class StealthDownloaderMiddleware:
             )
         logger.debug("Loaded %d proxies from spider settings", len(proxies))
 
-    async def process_request(self, request: Request, spider: Any) -> Response | None:
-        if self._stealth_enabled and STEALTH_KEY not in request.meta:
-            request.meta[STEALTH_KEY] = {}
+    @property
+    def _spider(self) -> Any:
+        """Active spider from the crawler saved in ``from_crawler``."""
+        if self._crawler is None:
+            return None
+        return getattr(self._crawler, "spider", None)
+
+    async def process_request(self, request: Request) -> Response | None:
+        _apply_stealth_enabled_defaults(request, self._stealth_enabled)
 
         engine_name = _resolve_engine(request, config.get("DEFAULT_ENGINE"))
         driver = _get_meta_data(request, "driver")
@@ -93,7 +108,7 @@ class StealthDownloaderMiddleware:
         if engine_name == "stealth":
             driver_label = getattr(engine, "driver_name", None)
             if not isinstance(driver_label, str):
-                driver_label = config.get("STEALTH_DRIVER") or "basic"
+                driver_label = config.get("STEALTH_DRIVER") or "turbo"
             self._stealth_stats.record_request(driver_label)
 
         if _get_meta_data(request, "snapshot", False) and not isinstance(
@@ -104,4 +119,33 @@ class StealthDownloaderMiddleware:
                 f"{(driver or config.get('STEALTH_DRIVER'))!r}. Snapshot will be ignored."
             )
 
-        return await engine.fetch(request, spider)
+        response = await engine.fetch(request, self._spider)
+        if engine_name != "stealth" or response is None:
+            return response
+
+        primary_driver = getattr(engine, "driver_name", None)
+        if not isinstance(primary_driver, str):
+            primary_driver = config.get("STEALTH_DRIVER") or "turbo"
+
+        if not should_driver_fallback(response, primary_driver, request):
+            return response
+
+        console.info(
+            f"Driver fallback {primary_driver!r} -> {FALLBACK_DRIVER!r} "
+            f"for {request.url!r} after HTTP {response.status}"
+        )
+        mark_fallback_done(request, primary_driver)
+        self._stealth_stats.record_fallback(primary_driver, FALLBACK_DRIVER)
+        self._stealth_stats.record_request(FALLBACK_DRIVER)
+
+        fallback_engine = self.manager.get(engine_name, FALLBACK_DRIVER)
+        try:
+            fallback_response = await fallback_engine.fetch(request, self._spider)
+        except Exception as exc:
+            console.warning(
+                f"Driver fallback {primary_driver!r} -> {FALLBACK_DRIVER!r} "
+                f"failed for {request.url!r}: {exc}"
+            )
+            return response
+
+        return fallback_response if fallback_response is not None else response

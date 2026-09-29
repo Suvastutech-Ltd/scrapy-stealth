@@ -14,21 +14,25 @@ except ImportError as exc:
 
 from ..config import config
 from ..detectors.antibot import AntiBotDetector
-from ..exceptions import StealthConnectionError, StealthTimeoutError, raise_stealth
-from ..utils.console import console
-from ..utils.dns import build_curl_resolve, resolve_dns_overrides
-from ..utils.headers import _FINGERPRINT_KEYS
-from ..utils.logger import get_logger
-from ..utils.profiles import resolve_browser
-from ..utils.response import StealthResponse
-from ..utils.session import BanStreakTracker, SessionCache
+from ..exceptions import (
+    StealthConnectionError,
+    StealthRequestError,
+    StealthTimeoutError,
+    raise_stealth,
+)
+from ..utils.browser.session import BanStreakTracker, SessionCache
+from ..utils.core.console import console
+from ..utils.core.logger import get_logger
+from ..utils.core.response import StealthResponse
+from ..utils.engine.profiles import resolve_browser
+from ..utils.network.dns import build_curl_resolve, resolve_dns_overrides
+from ..utils.network.request import build_stealth_request
 from .base import BaseEngine
 
 logger = get_logger()
 
 # Session cache key: (impersonate profile, frozen sorted DNS resolve entries).
-# DNS is applied at Session construction via CurlOpt.RESOLVE (curl_cffi does not
-# accept per-request curl_options on Session.request).
+# DNS is applied at Session construction via CurlOpt.RESOLVE (not per-request).
 _TurboSessionKey = tuple[Any, tuple[str, ...]]
 
 
@@ -80,22 +84,15 @@ class TurboEngine(BaseEngine):
         self._record_request_identity(ctx.profile, ctx.proxy)
         try:
             browser = resolve_browser(ctx.profile, backend="turbo")
-
-            headers = {
-                k: v
-                for k, v in request.headers.to_unicode_dict().items()
-                if k.lower() not in _FINGERPRINT_KEYS
-            }
+            prepared = build_stealth_request(request)
 
             kwargs: dict[str, Any] = {
-                "headers": headers,
+                **prepared.http_kwargs(),
                 "timeout": ctx.timeout,
                 "http_version": CurlHttpVersion.V2_0
                 if ctx.http2
                 else CurlHttpVersion.V1_1,
             }
-            if request.body:
-                kwargs["data"] = request.body
             if ctx.proxy:
                 kwargs["proxies"] = {"http": ctx.proxy, "https": ctx.proxy}
 
@@ -115,8 +112,8 @@ class TurboEngine(BaseEngine):
             )
 
             session = self._sessions.get((browser, resolve_entries))
-            method_fn = getattr(session, request.method.lower())
-            resp = method_fn(request.url, **kwargs)
+            method_fn = getattr(session, prepared.method_name)
+            resp = method_fn(prepared.url, **kwargs)
 
             resp_headers = {
                 k: v for k, v in resp.headers.items() if k.lower() != "content-encoding"
@@ -140,6 +137,9 @@ class TurboEngine(BaseEngine):
             self._maybe_recycle_sessions(response, current_proxy=ctx.proxy)
             return response
 
+        except StealthRequestError as exc:
+            logger.error("Turbo engine invalid request: %s", exc)
+            return None
         except TimeoutError:
             raise
         except Exception as exc:
@@ -156,7 +156,7 @@ class TurboEngine(BaseEngine):
             if isinstance(exc, (CurlConn, CurlDNS, CurlProxy)):
                 raise_stealth(
                     StealthConnectionError,
-                    f"Turbo engine connection failed fetching {request.url!r}",
+                    f"Turbo engine connection failed fetching {request.url!r}: {exc}",
                 )
             logger.error("Turbo engine request failed: %s", exc)
             return None

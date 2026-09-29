@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .utils.meta_info import _pkg_meta
+from .utils.core.meta_info import _pkg_meta
 
 # HTTP status codes that indicate an anti-bot block or rate-limit.
 # Used by both the retry logic and the anti-bot detector.
@@ -35,11 +35,15 @@ LOGGER_NAME = _pkg_meta.name
 # Disable if targeting servers that only support HTTP/1.1.
 HTTP2: bool = True
 
-# Default stealth driver. Options: "basic", "turbo", "browser".
-STEALTH_DRIVER: str = "basic"
+# Default stealth driver. Options: "basic", "turbo", "browser", or "auto".
+# "auto" uses this as the primary HTTP driver (default "turbo"), then retries once
+# with the browser driver on JS challenge / session ban.
+# Opt out per-request with meta["stealth"]["fallback"] = False.
+STEALTH_DRIVER: str = "turbo"
 
 # When True, all requests are routed through the stealth engine automatically —
-# no need to set meta={"stealth": {...}} on each request.
+# no need to set meta={"stealth": {...}} on each request. Injects driver="auto"
+# (HTTP first via STEALTH_DRIVER, then browser on JS challenge / session ban).
 # Set to True in settings.py or spider custom_settings to enable globally.
 # Per-request opt-out: meta={"stealth": False}
 STEALTH_ENABLED: bool = False

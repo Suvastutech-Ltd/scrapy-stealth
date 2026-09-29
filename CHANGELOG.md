@@ -7,6 +7,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+---
+
+## [Unreleased]
+
+---
+
+## [0.6.15] - 2026-08-18
+
+### Added
+
+* **POST / PUT / PATCH / DELETE on all drivers**
+  `basic`, `turbo`, and `browser` honor the same Scrapy `Request` fields — method,
+  body, `Cookie`, and custom headers (`Content-Type`, `Authorization`, etc.).
+
+* **Single request builder for all drivers**
+  `build_stealth_request()` in `scrapy_stealth.utils.network.request` validates
+  and normalizes method, URL, body, `Cookie`, and custom headers once. Browser
+  POST uses in-page `fetch()` via `browser_http_fetch()`.
+
+* **README and example spider**
+  New “POST, headers, and cookies” section with live test URLs
+  (`postman-echo.com`, `quotes.toscrape.com`, `jsonplaceholder.typicode.com`).
+  `examples/full_spider.py` demonstrates JSON POST on all three drivers and form
+  login via browser.
+
+### Fixed
+
+* **Browser POST — same-origin setup**
+  Load the target URL (GET), not the site root, before in-page `fetch()`. Fixes
+  `TypeError: Failed to fetch` when the root redirects elsewhere
+  (e.g. `postman-echo.com` → `www.postman.com`).
+
+* **Browser POST — brotli decode error in Scrapy**
+  Strip `content-encoding` and `content-length` from browser fetch responses; the
+  body from `arrayBuffer()` is already decoded.
+
+* **Basic driver — POST body dropped**
+  wreq expects raw bytes as `body=`, not `data=` (turbo/curl_cffi uses `data=`).
+  Added `StealthRequestPayload.basic_http_kwargs()` for the basic engine.
+
+* **Browser CDP headers on POST setup**
+  Do not send `Content-Type` / `Content-Length` via CDP extra headers during
+  origin setup; they are set only on the in-page `fetch()` call.
+
+### Changed
+
+* Browser POST context verifies same-origin after navigation and checks for Chrome
+  error pages before running `fetch()`.
+
+---
+
+## [0.6.14] - 2026-08-17
+
+### Changed
+
+* **PyPI wheel/sdist packaging**
+  Ship only `scrapy_stealth` and `docs/static/logo.png` (browser splash). Exclude
+  `examples/`, `scripts/`, sponsor assets, and other docs from installs.
+
+* **`STEALTH_ENABLED` uses smart driver selection by default**
+  When global stealth is on, the middleware injects `meta["stealth"]["driver"] = "auto"`
+  on requests that do not already specify a driver. HTTP impersonation (`turbo` by default,
+  or `STEALTH_DRIVER`) runs first; JS challenges and session bans retry once with the
+  `browser` driver.
+
+* **`STEALTH_DRIVER` default is now `"turbo"`**
+  `driver="auto"` and global stealth now start with the turbo driver for stronger TLS
+  impersonation. Set `STEALTH_DRIVER = "basic"` for the lighter HTTP driver.
+
+### Removed
+
+* **`STEALTH_AUTO_FALLBACK` setting**
+  Browser fallback is controlled solely by `driver="auto"` (injected automatically when
+  `STEALTH_ENABLED = True`, or set per-request). Use `meta["stealth"]["fallback"] = False`
+  to opt out for a single URL.
+
+### Fixed
+
+* **Browser splash logo showed a blank tab on startup**
+  `_splash_url()` loads `docs/static/logo.png` (included in PyPI wheels for splash).
+
+---
+
+## [0.6.13] - 2026-08-13
+
+### Changed
+
+* **NodeMaven sponsor materials**
+  Updated README and `AGENTS.md` with new copy, tracking links (`Fawadss1readmegh`, `Fawadss1agentmdgh`, `Fawadss1tools`), and the new horizontal banner (`docs/static/sponsors/nodemaven-banner.png`).
+
+* **Utils package layout**
+  Reorganised `scrapy_stealth.utils` into subpackages: `core`, `detection`,
+  `network`, `browser`, `engine`, and `telemetry`. Import paths updated
+  (e.g. `scrapy_stealth.utils.core.meta`, `scrapy_stealth.utils.network.proxy`).
+
+---
+
+## [0.6.12] - 2026-08-10
+
+### Changed
+
+* **Middleware — drop deprecated `spider` arg from `process_request`**
+  Matches current Scrapy downloader middleware API: the spider is read from the
+  crawler saved in `from_crawler()` (`crawler.spider`) instead of a method
+  argument. Removes the `ScrapyDeprecationWarning` about
+  `StealthDownloaderMiddleware.process_request()`.
+
+### Added
+
+* **Smart browser selection (`STEALTH_AUTO_FALLBACK`, `driver="auto"`)**
+  When `basic` or `turbo` returns a JS challenge or session ban, the middleware
+  retries once with the `browser` driver. The fallback always runs with
+  `headless=False` for better evasion. Opt in globally with
+  `STEALTH_AUTO_FALLBACK = True`, per-request with
+  `meta["stealth"]["driver"] = "auto"`, or opt out with
+  `meta["stealth"]["fallback"] = False`. Fallback counters appear under
+  `stealth/fallbacks` in `crawler.stats`.
+
+---
+
 ## [0.6.11] - 2026-08-04
 
 ### Added
@@ -945,6 +1065,10 @@ New `decorators` package with a `snapshot` decorator that auto-saves the PNG to 
 - `StealthConfig` for centralised configuration defaults
 
 ---
+
+[0.6.13]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.6.13
+
+[0.6.12]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.6.12
 
 [0.6.11]: https://github.com/fawadss1/scrapy-stealth/releases/tag/v0.6.11
 
