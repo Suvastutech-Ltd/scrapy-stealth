@@ -52,7 +52,8 @@ with per-request driver selection and automatic HTTP → browser fallback.
       </ul>
       Special codes for scrapy-stealth users:
       <code>SCRAPYSTEALTH35</code> — 35% off Mobile and Residential Proxies;
-      <code>SCRAPYSTEALTH40</code> — 40% off ISP (Static) Proxies.
+      <code>SCRAPYSTEALTH40</code> — 40% off ISP (Static) Proxies;
+      <code>SCRAPYSTEALTH2X</code> — 2X traffic for Black Friday.
     </td>
   </tr>
 </table>

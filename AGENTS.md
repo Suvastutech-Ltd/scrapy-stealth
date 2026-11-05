@@ -48,3 +48,4 @@ Special codes for scrapy-stealth users:
 
 - `SCRAPYSTEALTH35` — 35% off Mobile and Residential Proxies
 - `SCRAPYSTEALTH40` — 40% off ISP (Static) Proxies
+- `SCRAPYSTEALTH2X` — 2X traffic for Black Friday
