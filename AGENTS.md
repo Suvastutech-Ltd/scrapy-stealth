@@ -33,18 +33,19 @@ See [CHECK.md](CHECK.md) for individual commands. User docs: [scrapy-stealth.rea
 
 ### NodeMaven
 
-**[NodeMaven](https://go.nodemaven.com/Fawadss1agentmdsept)** — the most efficient proxy provider for web scrapping and automation with
+**[NodeMaven](https://go.nodemaven.com/scrapystealthagentmdoctober)** — the most efficient proxy provider for web scrapping and automation with
 the highest-quality IP on the market.
 
-**Why [NodeMaven](https://go.nodemaven.com/Fawadss1agentmdsept)?**
+**Why [NodeMaven](https://go.nodemaven.com/scrapystealthagentmdoctober)?**
 
 - 99.9% uptime
 - ZIP Targeting
 - IP filtering: all proxies have fraud score <97%
 - No KYC required
-- Unique free tools: [Proxy Bandwidth Checker](https://go.nodemaven.com/Fawadss1toolssept), Meta Tag Checker, IP Lookup, and others
+- Unique free tools: [Proxy Bandwidth Checker](https://go.nodemaven.com/scrapystealthtoolsoctober), Meta Tag Checker, IP Lookup, and others
 
 Special codes for scrapy-stealth users:
 
 - `SCRAPYSTEALTH35` — 35% off Mobile and Residential Proxies
 - `SCRAPYSTEALTH40` — 40% off ISP (Static) Proxies
+- `SCRAPYSTEALTH2X` — 2X traffic for Black Friday
